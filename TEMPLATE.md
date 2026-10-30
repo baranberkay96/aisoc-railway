@@ -576,7 +576,6 @@ Generated from `template.json`. `${{svc.VAR}}` references resolve on Railway; `$
 | `NEO4J_server_memory_heap_initial__size` | `256m` | JVM heap start (upstream values, Neo4j 5 setting names). |
 | `NEO4J_server_memory_heap_max__size` | `512m` | JVM heap limit. |
 | `NEO4J_server_memory_pagecache_size` | `256m` | Page cache (Neo4j would otherwise size it from host memory). |
-| `NEO4J_dbms_usage__report_enabled` | `false` | No usage reports to Neo4j. |
 | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `30` | Allow a clean shutdown on redeploy. |
 
 #### Postgres

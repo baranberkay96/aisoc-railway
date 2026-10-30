@@ -1796,11 +1796,6 @@
           "description": "Page cache (Neo4j would otherwise size it from host memory).",
           "required": false
         },
-        "NEO4J_dbms_usage__report_enabled": {
-          "defaultValue": "false",
-          "description": "No usage reports to Neo4j.",
-          "required": false
-        },
         "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
           "defaultValue": "30",
           "description": "Allow a clean shutdown on redeploy.",
