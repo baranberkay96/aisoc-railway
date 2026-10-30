@@ -1,5 +1,7 @@
 # Deploy and Host AiSOC with Railway
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/aisoc-v20-ai-security-operations-center?referralCode=20H68q)
+
 AiSOC is an open-source, self-hostable AI Security Operations Center. This template deploys its full v20.3.0 production stack on Railway in one step. It covers telemetry ingest, detection, correlation, an event lake, an entity graph and threat intel. AI triage runs on a bundled local model, and actions that change vendor systems wait for human approval. No API key is required.
 
 ## About Hosting AiSOC
