@@ -1,0 +1,1947 @@
+{
+  "name": "AiSOC v20 AI Security Operations Center",
+  "description": "Ingest security alerts, correlate threats and triage them with AI agents.",
+  "category": "AI/ML",
+  "tags": [
+    "aisoc",
+    "soc",
+    "security",
+    "siem",
+    "threat-detection",
+    "incident-response",
+    "ai-agents",
+    "llm",
+    "ollama",
+    "kafka",
+    "clickhouse",
+    "self-hosted"
+  ],
+  "image": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/shield-check.svg",
+  "upstream": {
+    "repo": "beenuar/AiSOC",
+    "version": "v20.3.0 (released 2026-10-30, commit e3edeb8)",
+    "license": "MIT",
+    "checked": "2026-10-30"
+  },
+  "services": {
+    "web": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/monitor.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-web:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/api/health",
+      "healthcheckTimeout": 600,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": true,
+      "targetPort": 3000,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "3000",
+          "description": "Port the Next.js console listens on (the image starts it with -p 3000); Railway routes the public domain and its healthcheck here.",
+          "required": false
+        },
+        "NODE_ENV": {
+          "defaultValue": "production",
+          "description": "Next.js production mode.",
+          "required": false
+        },
+        "AISOC_DEMO_MODE": {
+          "defaultValue": "false",
+          "description": "Demo mode off: the console never shows seeded demo data or the demo banner. Keep false.",
+          "required": false
+        },
+        "API_URL": {
+          "defaultValue": "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "description": "Core API on the private network. The console proxies /api/v1/* and /auth/* here server-side, so the API needs no public domain.",
+          "required": false
+        },
+        "AGENTS_URL": {
+          "defaultValue": "http://${{agents.RAILWAY_PRIVATE_DOMAIN}}:8084",
+          "description": "Agents service on the private network (copilot, hunts, playbooks routes).",
+          "required": false
+        },
+        "REALTIME_URL": {
+          "defaultValue": "http://${{realtime.RAILWAY_PRIVATE_DOMAIN}}:8086",
+          "description": "Realtime gateway on the private network (WebSocket /ws and SSE /sse are proxied here).",
+          "required": false
+        },
+        "ENRICHMENT_URL": {
+          "defaultValue": "http://127.0.0.1:9",
+          "description": "Deliberately unreachable. The console has no caller of /api/v1/enrichment/*, and that rewrite would otherwise expose the unauthenticated enrichment service through the public console.",
+          "required": false
+        }
+      }
+    },
+    "api": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/server.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-core-api:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": "/bin/bash -c 'n=0; until python -m app.scripts.run_migrations; do n=$((n+1)); if [ \"$n\" -ge 5 ]; then echo \"[railway] database migrations failed 5 times, giving up\" >&2; exit 1; fi; echo \"[railway] migrations failed (Postgres may still be starting), retry $n/5 in 15s\" >&2; sleep 15; done; python -m app.scripts.bootstrap_admin || exit 1; end=$((SECONDS+300)); for hp in ${AISOC_RAILWAY_WAIT_FOR:-}; do until (exec 3<>\"/dev/tcp/${hp%:*}/${hp##*:}\") 2>/dev/null; do if [ \"$SECONDS\" -ge \"$end\" ]; then echo \"[railway] $hp not reachable yet, continuing\" >&2; break; fi; sleep 5; done; done; exit 0'",
+      "preDeployTimeoutSeconds": 1800,
+      "healthcheckPath": "/readyz",
+      "healthcheckTimeout": 900,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "8000",
+          "description": "Port the API listens on (dual-stack); Railway's healthcheck probes it.",
+          "required": false
+        },
+        "ENVIRONMENT": {
+          "defaultValue": "production",
+          "description": "Production posture: the development auth bypass is unreachable and insecure defaults refuse to boot. Do not change.",
+          "required": false
+        },
+        "AISOC_DEV_MODE": {
+          "defaultValue": "0",
+          "description": "Development mode off: routes never fall back to an anonymous or demo principal. Do not change.",
+          "required": false
+        },
+        "AISOC_PUBLISHED_BIND_ADDRS": {
+          "defaultValue": "0.0.0.0",
+          "description": "Tells the service it is reachable from other hosts, so the developer auth shim stays refused even if dev mode were switched on.",
+          "required": false
+        },
+        "AISOC_ALLOW_CLEARTEXT_KAFKA": {
+          "defaultValue": "1",
+          "description": "Allow PLAINTEXT Kafka in production: the broker is reachable only over Railway's private network, which Railway encrypts. Set KAFKA_SECURITY_PROTOCOL instead if you bring a TLS broker.",
+          "required": false
+        },
+        "AISOC_ADMIN_EMAIL": {
+          "defaultValue": "admin@aisoc.internal",
+          "description": "Sign-in e-mail of the first administrator, created by the pre-deploy step on the first deploy. Change it before deploying if you like (must be a syntactically valid address; .local/.test are rejected).",
+          "required": false
+        },
+        "AISOC_ADMIN_PASSWORD": {
+          "defaultValue": "${{secret(24, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Password of the first administrator (generated, 24 characters). Copy it from here to sign in; changing this variable later does not change an existing account (reset with `python -m app.scripts.bootstrap_admin --reset-password` in the api service shell).",
+          "required": false
+        },
+        "SECRET_KEY": {
+          "defaultValue": "${{secret(64, \"0123456789abcdef\")}}",
+          "description": "HS256 key for console sessions, shared by every service that verifies a console token (generated).",
+          "required": false
+        },
+        "JWT_SECRET": {
+          "defaultValue": "${{secret(48, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "HS256 key for SAML/OIDC session tokens, shared with ingest (generated; required in production).",
+          "required": false
+        },
+        "AISOC_CREDENTIAL_KEY": {
+          "defaultValue": "${{secret(42, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_\")}}${{secret(1, \"AEIMQUYcgkosw048\")}}=",
+          "description": "Fernet key (32 bytes, url-safe base64) that encrypts connector credentials at rest; shared with connectors and actions (generated). Never change it after connectors are saved; rotate with AISOC_CREDENTIAL_KEY_ROTATION_FROM.",
+          "required": false
+        },
+        "AISOC_SERVICE_TOKEN": {
+          "defaultValue": "${{secret(48, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Shared bearer for service-to-service calls and connector pushes to ingest (generated).",
+          "required": false
+        },
+        "AISOC_API_SERVICE_TOKEN": {
+          "defaultValue": "${{secret(48, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Bearer a peer service presents to the API (agent customer tools, lake pivots, hunts) (generated).",
+          "required": false
+        },
+        "AISOC_AGENTS_SERVICE_TOKEN": {
+          "defaultValue": "${{secret(48, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Bearer between the API and the agents service (triage context, MCP tools, SIEM writeback) (generated).",
+          "required": false
+        },
+        "AISOC_ACTIONS_SERVICE_TOKEN": {
+          "defaultValue": "${{secret(48, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Bearer that gates every response action on the actions service (generated). Kept separate from the shared token on purpose.",
+          "required": false
+        },
+        "AISOC_REALTIME_JWT_SECRET": {
+          "defaultValue": "${{secret(48, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "HS256 key for realtime WebSocket/SSE tickets; the API mints, realtime verifies (generated).",
+          "required": false
+        },
+        "REALTIME_INTERNAL_TOKEN": {
+          "defaultValue": "${{secret(48, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Bearer for realtime's /internal/* fan-out routes (generated).",
+          "required": false
+        },
+        "METRICS_TOKEN": {
+          "defaultValue": "${{secret(48, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Bearer required on /metrics outside development (generated).",
+          "required": false
+        },
+        "AISOC_APP_DB_PASSWORD": {
+          "defaultValue": "${{secret(48, \"0123456789abcdef\")}}",
+          "description": "Password of the aisoc_app runtime database role (DML only, row-level security applies). The pre-deploy migration step creates the role and sets this password (generated).",
+          "required": false
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgresql+asyncpg://aisoc_app:${{AISOC_APP_DB_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}?sslmode=require",
+          "description": "Runtime connection as aisoc_app, TLS required (Railway Postgres serves TLS).",
+          "required": false
+        },
+        "DATABASE_MIGRATION_URL": {
+          "defaultValue": "postgresql+asyncpg://${{Postgres.POSTGRES_USER}}:${{Postgres.POSTGRES_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}?sslmode=require",
+          "description": "Owner connection used only by the pre-deploy migration runner for DDL, TLS required.",
+          "required": false
+        },
+        "AISOC_MIGRATIONS_STRICT": {
+          "defaultValue": "1",
+          "description": "Fail the deploy if any SQL migration fails, instead of booting on a partial schema.",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379/0",
+          "description": "Redis (database 0) on the private network.",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker (Redpanda) on the private network.",
+          "required": false
+        },
+        "CLICKHOUSE_HOST": {
+          "defaultValue": "${{clickhouse.RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "ClickHouse event lake host (native protocol).",
+          "required": false
+        },
+        "CLICKHOUSE_PORT": {
+          "defaultValue": "9000",
+          "description": "ClickHouse native port.",
+          "required": false
+        },
+        "CLICKHOUSE_DATABASE": {
+          "defaultValue": "aisoc",
+          "description": "ClickHouse database.",
+          "required": false
+        },
+        "CLICKHOUSE_USER": {
+          "defaultValue": "${{clickhouse.CLICKHOUSE_USER}}",
+          "description": "ClickHouse user.",
+          "required": false
+        },
+        "CLICKHOUSE_PASSWORD": {
+          "defaultValue": "${{clickhouse.CLICKHOUSE_PASSWORD}}",
+          "description": "ClickHouse password.",
+          "required": false
+        },
+        "QDRANT_URL": {
+          "defaultValue": "http://${{qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333",
+          "description": "Qdrant vector store.",
+          "required": false
+        },
+        "NEO4J_URI": {
+          "defaultValue": "bolt://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7687",
+          "description": "Neo4j entity graph (direct Bolt).",
+          "required": false
+        },
+        "NEO4J_USER": {
+          "defaultValue": "neo4j",
+          "description": "Neo4j user.",
+          "required": false
+        },
+        "NEO4J_PASSWORD": {
+          "defaultValue": "${{neo4j.NEO4J_PASSWORD}}",
+          "description": "Neo4j password.",
+          "required": false
+        },
+        "CONNECTORS_SERVICE_URL": {
+          "defaultValue": "http://${{connectors.RAILWAY_PRIVATE_DOMAIN}}:8003",
+          "description": "Connectors service (catalog, test connection, federated search).",
+          "required": false
+        },
+        "THREATINTEL_SERVICE_URL": {
+          "defaultValue": "http://${{threatintel.RAILWAY_PRIVATE_DOMAIN}}:8005",
+          "description": "Threat-intel service (serves /api/v1/threat-intel/indicators).",
+          "required": false
+        },
+        "AGENTS_SERVICE_URL": {
+          "defaultValue": "http://${{agents.RAILWAY_PRIVATE_DOMAIN}}:8084",
+          "description": "Agents service (investigations, playbooks).",
+          "required": false
+        },
+        "FUSION_SERVICE_URL": {
+          "defaultValue": "http://${{fusion.RAILWAY_PRIVATE_DOMAIN}}:8003",
+          "description": "Fusion service behind the API's authenticated fusion gateway (entity risk, ML status).",
+          "required": false
+        },
+        "REALTIME_BASE_URL": {
+          "defaultValue": "http://${{realtime.RAILWAY_PRIVATE_DOMAIN}}:8086",
+          "description": "Realtime gateway for /internal/* fan-out.",
+          "required": false
+        },
+        "AISOC_ACTIONS_BASE_URL": {
+          "defaultValue": "http://${{actions.RAILWAY_PRIVATE_DOMAIN}}:8085",
+          "description": "Actions service, where an approved response action is executed.",
+          "required": false
+        },
+        "INGEST_SERVICE_URL": {
+          "defaultValue": "http://${{ingest.RAILWAY_PRIVATE_DOMAIN}}:8080",
+          "description": "Ingest service on the private network.",
+          "required": false
+        },
+        "INGEST_PUBLIC_URL": {
+          "defaultValue": "https://${{ingest.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Public ingest URL shown in the setup wizard's push-URL examples. The sample-data button also posts here. Update after adding a custom domain to ingest.",
+          "required": false
+        },
+        "LLM_GATEWAY_URL": {
+          "defaultValue": "http://${{litellm.RAILWAY_PRIVATE_DOMAIN}}:4000/v1",
+          "description": "LiteLLM gateway that resolves every aisoc-* model alias.",
+          "required": false
+        },
+        "LITELLM_MASTER_KEY": {
+          "defaultValue": "${{litellm.LITELLM_MASTER_KEY}}",
+          "description": "Bearer the API presents to the LiteLLM gateway.",
+          "required": false
+        },
+        "OPENAI_API_KEY": {
+          "defaultValue": "${{litellm.OPENAI_API_KEY}}",
+          "description": "Optional hosted-provider key (empty = local model only). Set it on the litellm service; this references it.",
+          "required": false
+        },
+        "AISOC_OLLAMA_URL": {
+          "defaultValue": "http://${{ollama.RAILWAY_PRIVATE_DOMAIN}}:11434",
+          "description": "Local Ollama server, probed by the console's 'Deployment & AI' page.",
+          "required": false
+        },
+        "AISOC_CONSOLE_URL": {
+          "defaultValue": "https://${{web.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Console origin printed by the admin bootstrap and used in links.",
+          "required": false
+        },
+        "CONSOLE_PUBLIC_BASE_URL": {
+          "defaultValue": "https://${{web.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Console origin for share/invite links and OAuth return URLs. Update after adding a custom domain to web.",
+          "required": false
+        },
+        "OAUTH_PUBLIC_BASE_URL": {
+          "defaultValue": "https://${{web.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Base URL advertised as the OAuth redirect for connector sign-in (the console proxies /api/v1/oauth/callback to the API).",
+          "required": false
+        },
+        "AISOC_CORS_ORIGINS": {
+          "defaultValue": "https://${{web.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Allowed browser origin (the console).",
+          "required": false
+        },
+        "PASSKEY_RP_ID": {
+          "defaultValue": "${{web.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "WebAuthn relying-party id: the console host name. Update after adding a custom domain.",
+          "required": false
+        },
+        "PASSKEY_RP_ORIGINS": {
+          "defaultValue": "[\"https://${{web.RAILWAY_PUBLIC_DOMAIN}}\"]",
+          "description": "WebAuthn origins as a JSON list (the console origin).",
+          "required": false
+        },
+        "RETRO_HUNT_ENABLED": {
+          "defaultValue": "false",
+          "description": "Retro-hunt sweeps over stored history (cost and privacy decision; off as upstream).",
+          "required": false
+        },
+        "OTEL_EXPORTER": {
+          "defaultValue": "none",
+          "description": "Tracing exporter off (no OpenTelemetry collector in this template).",
+          "required": false
+        },
+        "LOG_LEVEL": {
+          "defaultValue": "info",
+          "description": "Log level.",
+          "required": false
+        },
+        "AISOC_RAILWAY_WAIT_FOR": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092 ${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7687 ${{clickhouse.RAILWAY_PRIVATE_DOMAIN}}:9000 ${{qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333",
+          "description": "Template helper: the pre-deploy step waits (up to 5 minutes in total, non-fatal) until these host:port pairs accept connections, so the API starts with its graph and lake connections available on a first deploy.",
+          "required": false
+        }
+      }
+    },
+    "ingest": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/inbox.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-ingest:v20.3.0"
+      },
+      "startCommand": "/bin/sh -c 'i=0; while [ \"$i\" -lt 36 ]; do wget -q -T 3 -O /dev/null \"$AISOC_RAILWAY_WAIT_URL\" && break; i=$((i+1)); sleep 5; done; exec ./ingest-service'",
+      "preDeployCommand": null,
+      "healthcheckPath": "/readyz",
+      "healthcheckTimeout": 900,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": true,
+      "targetPort": 8080,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "8080",
+          "description": "Port Railway routes the public domain and healthcheck to (same as HTTP_PORT).",
+          "required": false
+        },
+        "HTTP_PORT": {
+          "defaultValue": "8080",
+          "description": "Ingest HTTP port.",
+          "required": false
+        },
+        "METRICS_PORT": {
+          "defaultValue": "9090",
+          "description": "Separate metrics listener port (private).",
+          "required": false
+        },
+        "ENV": {
+          "defaultValue": "production",
+          "description": "Read before ENVIRONMENT by ingest's mode check. Production requires JWT_SECRET and disables development shortcuts. Do not change.",
+          "required": false
+        },
+        "ENVIRONMENT": {
+          "defaultValue": "production",
+          "description": "Production posture. Do not change.",
+          "required": false
+        },
+        "AISOC_ALLOW_CLEARTEXT_KAFKA": {
+          "defaultValue": "1",
+          "description": "Allow PLAINTEXT Kafka on Railway's encrypted private network.",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker (Redpanda).",
+          "required": false
+        },
+        "DATABASE_DSN": {
+          "defaultValue": "postgres://aisoc_app:${{api.AISOC_APP_DB_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}?sslmode=require",
+          "description": "Postgres (pgx DSN, TLS required) used to resolve minted push tokens and mount the /v1/inbox/* webhook routes.",
+          "required": false
+        },
+        "JWT_SECRET": {
+          "defaultValue": "${{api.JWT_SECRET}}",
+          "description": "Same JWT secret as the API (ingest refuses to start without one in production).",
+          "required": false
+        },
+        "AISOC_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_SERVICE_TOKEN}}",
+          "description": "Shared service token; accepted on /v1/ingest only together with an X-Tenant-ID header naming an active tenant.",
+          "required": false
+        },
+        "ATTCK_DATA_PATH": {
+          "defaultValue": "/app/data/enterprise-attack.json",
+          "description": "Upstream's path for the ATT&CK bundle. The published image does not contain it, so technique enrichment at ingest is off (upstream behaviour, logged as a warning); detections and the agents still map techniques.",
+          "required": false
+        },
+        "AISOC_GRAPH_ENABLED": {
+          "defaultValue": "true",
+          "description": "Write entities to the Neo4j graph at ingest (upstream 'full' profile).",
+          "required": false
+        },
+        "AISOC_NEO4J_URI": {
+          "defaultValue": "bolt://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7687",
+          "description": "Neo4j entity graph.",
+          "required": false
+        },
+        "AISOC_NEO4J_USER": {
+          "defaultValue": "neo4j",
+          "description": "Neo4j user.",
+          "required": false
+        },
+        "AISOC_NEO4J_PASSWORD": {
+          "defaultValue": "${{neo4j.NEO4J_PASSWORD}}",
+          "description": "Neo4j password.",
+          "required": false
+        },
+        "AISOC_CORS_ORIGINS": {
+          "defaultValue": "https://${{web.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Allowed browser origin (the console). Telemetry senders are not browsers and are unaffected.",
+          "required": false
+        },
+        "AISOC_RAILWAY_WAIT_URL": {
+          "defaultValue": "http://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7474/",
+          "description": "Template helper: ingest waits up to 3 minutes for Neo4j at start, because its graph writer disables itself for the life of the process if Neo4j is not reachable within 60 s.",
+          "required": false
+        }
+      }
+    },
+    "fusion": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/git-merge.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-fusion:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/readyz",
+      "healthcheckTimeout": 900,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/data"
+      },
+      "variables": {
+        "PORT": {
+          "defaultValue": "8003",
+          "description": "Port fusion listens on (fixed in the image's command); Railway's healthcheck probes it.",
+          "required": false
+        },
+        "ENVIRONMENT": {
+          "defaultValue": "production",
+          "description": "Production posture: the development auth bypass is unreachable and insecure defaults refuse to boot. Do not change.",
+          "required": false
+        },
+        "AISOC_DEV_MODE": {
+          "defaultValue": "0",
+          "description": "Development mode off: routes never fall back to an anonymous or demo principal. Do not change.",
+          "required": false
+        },
+        "AISOC_PUBLISHED_BIND_ADDRS": {
+          "defaultValue": "0.0.0.0",
+          "description": "Tells the service it is reachable from other hosts, so the developer auth shim stays refused even if dev mode were switched on.",
+          "required": false
+        },
+        "AISOC_ALLOW_CLEARTEXT_KAFKA": {
+          "defaultValue": "1",
+          "description": "Allow PLAINTEXT Kafka in production: the broker is reachable only over Railway's private network, which Railway encrypts. Set KAFKA_SECURITY_PROTOCOL instead if you bring a TLS broker.",
+          "required": false
+        },
+        "SECRET_KEY": {
+          "defaultValue": "${{api.SECRET_KEY}}",
+          "description": "Console token key (verifies console callers).",
+          "required": false
+        },
+        "AISOC_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_SERVICE_TOKEN}}",
+          "description": "Shared service token.",
+          "required": false
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgresql+asyncpg://aisoc_app:${{api.AISOC_APP_DB_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}",
+          "description": "Postgres as aisoc_app (alerts, outbox).",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379/3",
+          "description": "Redis (database 3).",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker (Redpanda).",
+          "required": false
+        },
+        "AISOC_LAKE_WRITER_ENABLED": {
+          "defaultValue": "true",
+          "description": "Archive every event to the ClickHouse lake (upstream 'full' profile).",
+          "required": false
+        },
+        "AISOC_LAKE_SPOOL_DIR": {
+          "defaultValue": "/data/lake-spool",
+          "description": "On-disk spool for lake rows not yet written (on the volume, so committed Kafka offsets are never lost on redeploy).",
+          "required": false
+        },
+        "CLICKHOUSE_HOST": {
+          "defaultValue": "${{clickhouse.RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "ClickHouse host.",
+          "required": false
+        },
+        "CLICKHOUSE_PORT": {
+          "defaultValue": "9000",
+          "description": "ClickHouse native port.",
+          "required": false
+        },
+        "CLICKHOUSE_DATABASE": {
+          "defaultValue": "aisoc",
+          "description": "ClickHouse database.",
+          "required": false
+        },
+        "CLICKHOUSE_USER": {
+          "defaultValue": "${{clickhouse.CLICKHOUSE_USER}}",
+          "description": "ClickHouse user.",
+          "required": false
+        },
+        "CLICKHOUSE_PASSWORD": {
+          "defaultValue": "${{clickhouse.CLICKHOUSE_PASSWORD}}",
+          "description": "ClickHouse password.",
+          "required": false
+        },
+        "ENRICHMENT_SERVICE_URL": {
+          "defaultValue": "http://${{enrichment.RAILWAY_PRIVATE_DOMAIN}}:8082",
+          "description": "Enrichment service for fuse-time IOC enrichment.",
+          "required": false
+        }
+      }
+    },
+    "agents": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/bot.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-agents:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/readyz",
+      "healthcheckTimeout": 900,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/data"
+      },
+      "variables": {
+        "PORT": {
+          "defaultValue": "8084",
+          "description": "Port the agents service listens on (dual-stack).",
+          "required": false
+        },
+        "ENVIRONMENT": {
+          "defaultValue": "production",
+          "description": "Production posture: the development auth bypass is unreachable and insecure defaults refuse to boot. Do not change.",
+          "required": false
+        },
+        "AISOC_DEV_MODE": {
+          "defaultValue": "0",
+          "description": "Development mode off: routes never fall back to an anonymous or demo principal. Do not change.",
+          "required": false
+        },
+        "AISOC_PUBLISHED_BIND_ADDRS": {
+          "defaultValue": "0.0.0.0",
+          "description": "Tells the service it is reachable from other hosts, so the developer auth shim stays refused even if dev mode were switched on.",
+          "required": false
+        },
+        "AISOC_ALLOW_CLEARTEXT_KAFKA": {
+          "defaultValue": "1",
+          "description": "Allow PLAINTEXT Kafka in production: the broker is reachable only over Railway's private network, which Railway encrypts. Set KAFKA_SECURITY_PROTOCOL instead if you bring a TLS broker.",
+          "required": false
+        },
+        "SECRET_KEY": {
+          "defaultValue": "${{api.SECRET_KEY}}",
+          "description": "Console token key.",
+          "required": false
+        },
+        "AISOC_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_SERVICE_TOKEN}}",
+          "description": "Shared service token.",
+          "required": false
+        },
+        "AISOC_API_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_API_SERVICE_TOKEN}}",
+          "description": "Bearer presented to the API.",
+          "required": false
+        },
+        "AISOC_AGENTS_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_AGENTS_SERVICE_TOKEN}}",
+          "description": "This service's own credential (both directions with the API).",
+          "required": false
+        },
+        "AISOC_ACTIONS_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_ACTIONS_SERVICE_TOKEN}}",
+          "description": "Bearer for the actions service (submits proposals; execution still needs approval).",
+          "required": false
+        },
+        "REALTIME_INTERNAL_TOKEN": {
+          "defaultValue": "${{api.REALTIME_INTERNAL_TOKEN}}",
+          "description": "Bearer for realtime's /internal/* (playbook progress).",
+          "required": false
+        },
+        "METRICS_TOKEN": {
+          "defaultValue": "${{api.METRICS_TOKEN}}",
+          "description": "Bearer required on this service's /metrics.",
+          "required": false
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgresql+asyncpg://aisoc_app:${{api.AISOC_APP_DB_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}",
+          "description": "Postgres as aisoc_app.",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379/4",
+          "description": "Redis (database 4).",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker (auto-triage consumes aisoc.alerts.fused).",
+          "required": false
+        },
+        "KAFKA_TOPIC_ALERTS_FUSED": {
+          "defaultValue": "aisoc.alerts.fused",
+          "description": "Topic of fused alerts to triage.",
+          "required": false
+        },
+        "CORE_API_URL": {
+          "defaultValue": "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "description": "Core API.",
+          "required": false
+        },
+        "API_SERVICE_URL": {
+          "defaultValue": "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "description": "Core API (name read by the context and tool modules).",
+          "required": false
+        },
+        "API_URL": {
+          "defaultValue": "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "description": "Core API (name read by the playbook engine).",
+          "required": false
+        },
+        "AISOC_API_URL": {
+          "defaultValue": "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "description": "Core API (name read by hunts, MCP registry and customer tools).",
+          "required": false
+        },
+        "REALTIME_URL": {
+          "defaultValue": "http://${{realtime.RAILWAY_PRIVATE_DOMAIN}}:8086",
+          "description": "Realtime gateway.",
+          "required": false
+        },
+        "CONNECTORS_SERVICE_URL": {
+          "defaultValue": "http://${{connectors.RAILWAY_PRIVATE_DOMAIN}}:8003",
+          "description": "Connectors service.",
+          "required": false
+        },
+        "FUSION_SERVICE_URL": {
+          "defaultValue": "http://${{fusion.RAILWAY_PRIVATE_DOMAIN}}:8003",
+          "description": "Fusion service.",
+          "required": false
+        },
+        "ENRICHMENT_SERVICE_URL": {
+          "defaultValue": "http://${{enrichment.RAILWAY_PRIVATE_DOMAIN}}:8082",
+          "description": "Enrichment service.",
+          "required": false
+        },
+        "AISOC_THREATINTEL_URL": {
+          "defaultValue": "http://${{threatintel.RAILWAY_PRIVATE_DOMAIN}}:8005",
+          "description": "Threat-intel service.",
+          "required": false
+        },
+        "AISOC_UEBA_URL": {
+          "defaultValue": "http://${{ueba.RAILWAY_PRIVATE_DOMAIN}}:8004",
+          "description": "UEBA service.",
+          "required": false
+        },
+        "QDRANT_URL": {
+          "defaultValue": "http://${{qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333",
+          "description": "Qdrant vector store.",
+          "required": false
+        },
+        "NEO4J_URI": {
+          "defaultValue": "bolt://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7687",
+          "description": "Neo4j entity graph.",
+          "required": false
+        },
+        "NEO4J_USER": {
+          "defaultValue": "neo4j",
+          "description": "Neo4j user.",
+          "required": false
+        },
+        "NEO4J_PASSWORD": {
+          "defaultValue": "${{neo4j.NEO4J_PASSWORD}}",
+          "description": "Neo4j password.",
+          "required": false
+        },
+        "CLICKHOUSE_HOST": {
+          "defaultValue": "${{clickhouse.RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "ClickHouse host (hunting agent).",
+          "required": false
+        },
+        "CLICKHOUSE_PORT": {
+          "defaultValue": "9000",
+          "description": "ClickHouse native port.",
+          "required": false
+        },
+        "CLICKHOUSE_DATABASE": {
+          "defaultValue": "aisoc",
+          "description": "ClickHouse database.",
+          "required": false
+        },
+        "CLICKHOUSE_USER": {
+          "defaultValue": "${{clickhouse.CLICKHOUSE_USER}}",
+          "description": "ClickHouse user.",
+          "required": false
+        },
+        "CLICKHOUSE_PASSWORD": {
+          "defaultValue": "${{clickhouse.CLICKHOUSE_PASSWORD}}",
+          "description": "ClickHouse password.",
+          "required": false
+        },
+        "LLM_GATEWAY_URL": {
+          "defaultValue": "http://${{litellm.RAILWAY_PRIVATE_DOMAIN}}:4000/v1",
+          "description": "LiteLLM gateway for every aisoc-* model alias.",
+          "required": false
+        },
+        "LITELLM_MASTER_KEY": {
+          "defaultValue": "${{litellm.LITELLM_MASTER_KEY}}",
+          "description": "Bearer for the LiteLLM gateway.",
+          "required": false
+        },
+        "OPENAI_MODEL": {
+          "defaultValue": "aisoc-summary",
+          "description": "Model alias for the 'explain this alert' path (resolved by the gateway).",
+          "required": false
+        },
+        "OPENAI_API_KEY": {
+          "defaultValue": "${{litellm.OPENAI_API_KEY}}",
+          "description": "Optional hosted-provider key; set on the litellm service.",
+          "required": false
+        },
+        "ANTHROPIC_API_KEY": {
+          "defaultValue": "${{litellm.ANTHROPIC_API_KEY}}",
+          "description": "Optional hosted-provider key; set on the litellm service.",
+          "required": false
+        },
+        "ATTCK_DATA_PATH": {
+          "defaultValue": "/data/attack/enterprise-attack.json",
+          "description": "Where the full MITRE ATT&CK bundle is cached (on the volume). The image does not ship it.",
+          "required": false
+        },
+        "AISOC_ATTCK_CDN_FETCH": {
+          "defaultValue": "1",
+          "description": "Download the public MITRE ATT&CK bundle from MITRE's GitHub once and cache it at ATTCK_DATA_PATH (upstream default is off, for air-gapped installs; without it the agents use a small built-in technique list). Set 0 to keep the service from fetching it.",
+          "required": false
+        },
+        "AISOC_INVESTIGATION_MAX_SECONDS": {
+          "defaultValue": "120",
+          "description": "Wall-clock budget of one investigation (upstream default).",
+          "required": false
+        },
+        "CONSOLE_PUBLIC_BASE_URL": {
+          "defaultValue": "https://${{web.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Console origin for links.",
+          "required": false
+        },
+        "PLAYBOOK_STORE_DIR": {
+          "defaultValue": "/data/playbooks",
+          "description": "Where playbooks created in the console are saved (on the volume; upstream writes them into the container). The service creates the directory.",
+          "required": false
+        },
+        "AISOC_PLAYBOOK_ACTIONS_EXECUTE": {
+          "defaultValue": "0",
+          "description": "Playbook action steps submit to the actions service as previews only (upstream default). Approval rules still apply when enabled.",
+          "required": false
+        },
+        "AISOC_PLAYBOOK_HTTP_EXECUTE": {
+          "defaultValue": "0",
+          "description": "Playbook HTTP steps are previewed, not sent (upstream default).",
+          "required": false
+        },
+        "AISOC_PLAYBOOK_NOTIFY_EXECUTE": {
+          "defaultValue": "0",
+          "description": "Playbook notify steps are previewed, not sent (upstream default).",
+          "required": false
+        },
+        "AISOC_PLAYBOOK_VERIFY_EXECUTE": {
+          "defaultValue": "0",
+          "description": "Playbook user-verification prompts are previewed, not sent (upstream default).",
+          "required": false
+        },
+        "OTEL_EXPORTER": {
+          "defaultValue": "none",
+          "description": "Tracing exporter off (no OpenTelemetry collector in this template).",
+          "required": false
+        }
+      }
+    },
+    "actions": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/zap.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-actions:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/readyz",
+      "healthcheckTimeout": 900,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "8085",
+          "description": "Port the actions service listens on (fixed in the image's command).",
+          "required": false
+        },
+        "ENVIRONMENT": {
+          "defaultValue": "production",
+          "description": "Production posture: the development auth bypass is unreachable and insecure defaults refuse to boot. Do not change.",
+          "required": false
+        },
+        "AISOC_DEV_MODE": {
+          "defaultValue": "0",
+          "description": "Development mode off: routes never fall back to an anonymous or demo principal. Do not change.",
+          "required": false
+        },
+        "AISOC_PUBLISHED_BIND_ADDRS": {
+          "defaultValue": "0.0.0.0",
+          "description": "Tells the service it is reachable from other hosts, so the developer auth shim stays refused even if dev mode were switched on.",
+          "required": false
+        },
+        "AISOC_ALLOW_CLEARTEXT_KAFKA": {
+          "defaultValue": "1",
+          "description": "Allow PLAINTEXT Kafka in production: the broker is reachable only over Railway's private network, which Railway encrypts. Set KAFKA_SECURITY_PROTOCOL instead if you bring a TLS broker.",
+          "required": false
+        },
+        "AISOC_ACTIONS_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_ACTIONS_SERVICE_TOKEN}}",
+          "description": "Bearer required on POST /actions and approve/reject; without it every mutating route answers 503.",
+          "required": false
+        },
+        "AISOC_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_SERVICE_TOKEN}}",
+          "description": "Shared service token.",
+          "required": false
+        },
+        "SECRET_KEY": {
+          "defaultValue": "${{api.SECRET_KEY}}",
+          "description": "Console token key.",
+          "required": false
+        },
+        "AISOC_CREDENTIAL_KEY": {
+          "defaultValue": "${{api.AISOC_CREDENTIAL_KEY}}",
+          "description": "Decrypts vault-encrypted connector credentials in action payloads.",
+          "required": false
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgresql+asyncpg://aisoc_app:${{api.AISOC_APP_DB_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}",
+          "description": "Postgres as aisoc_app (action records).",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379/5",
+          "description": "Redis (database 5).",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker.",
+          "required": false
+        },
+        "CORE_API_URL": {
+          "defaultValue": "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "description": "Core API.",
+          "required": false
+        },
+        "AISOC_API_BASE_URL": {
+          "defaultValue": "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "description": "Core API (name read by the actions settings).",
+          "required": false
+        },
+        "AISOC_MATURITY_TIER": {
+          "defaultValue": "L1",
+          "description": "Autonomy tier L1-Notify (upstream default, set explicitly): anything above read-only impact waits for a human approval.",
+          "required": false
+        },
+        "AISOC_ACTIONS_REQUIRE_APPROVER": {
+          "defaultValue": "true",
+          "description": "Approve/reject calls must carry a resolvable approver identity (separation of duties).",
+          "required": false
+        },
+        "AISOC_ACTIONS_DEFAULT_DRY_RUN": {
+          "defaultValue": "true",
+          "description": "Dry-run by default unless an operator opts out (upstream default, set explicitly).",
+          "required": false
+        },
+        "AISOC_ALLOW_HIGH_BLAST_AUTO": {
+          "defaultValue": "false",
+          "description": "Break-glass for unattended high-blast-radius actions. Keep false.",
+          "required": false
+        },
+        "AISOC_FEATURE_MAILBOX_REMEDIATION": {
+          "defaultValue": "false",
+          "description": "Mailbox purge/restore/block verbs off (upstream default).",
+          "required": false
+        }
+      }
+    },
+    "connectors": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/plug.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-connectors:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/readyz",
+      "healthcheckTimeout": 900,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "8003",
+          "description": "Port the connectors service listens on (dual-stack); the API's connectors URL points here.",
+          "required": false
+        },
+        "ENVIRONMENT": {
+          "defaultValue": "production",
+          "description": "Production posture: the development auth bypass is unreachable and insecure defaults refuse to boot. Do not change.",
+          "required": false
+        },
+        "AISOC_DEV_MODE": {
+          "defaultValue": "0",
+          "description": "Development mode off: routes never fall back to an anonymous or demo principal. Do not change.",
+          "required": false
+        },
+        "AISOC_PUBLISHED_BIND_ADDRS": {
+          "defaultValue": "0.0.0.0",
+          "description": "Tells the service it is reachable from other hosts, so the developer auth shim stays refused even if dev mode were switched on.",
+          "required": false
+        },
+        "AISOC_ALLOW_CLEARTEXT_KAFKA": {
+          "defaultValue": "1",
+          "description": "Allow PLAINTEXT Kafka in production: the broker is reachable only over Railway's private network, which Railway encrypts. Set KAFKA_SECURITY_PROTOCOL instead if you bring a TLS broker.",
+          "required": false
+        },
+        "SECRET_KEY": {
+          "defaultValue": "${{api.SECRET_KEY}}",
+          "description": "Console token key (the API forwards console tokens here).",
+          "required": false
+        },
+        "AISOC_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_SERVICE_TOKEN}}",
+          "description": "Shared service token (also used to push polled events to ingest).",
+          "required": false
+        },
+        "AISOC_CREDENTIAL_KEY": {
+          "defaultValue": "${{api.AISOC_CREDENTIAL_KEY}}",
+          "description": "Decrypts stored connector credentials at poll time (the scheduler refuses to start without it).",
+          "required": false
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgresql+asyncpg://aisoc_app:${{api.AISOC_APP_DB_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}",
+          "description": "Postgres as aisoc_app.",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379/6",
+          "description": "Redis (database 6).",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker.",
+          "required": false
+        },
+        "CORE_API_URL": {
+          "defaultValue": "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "description": "Core API.",
+          "required": false
+        },
+        "INGEST_SERVICE_URL": {
+          "defaultValue": "http://${{ingest.RAILWAY_PRIVATE_DOMAIN}}:8080",
+          "description": "Ingest service on the private network (polled events are pushed here).",
+          "required": false
+        }
+      }
+    },
+    "threatintel": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/globe.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-threatintel:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/readyz",
+      "healthcheckTimeout": 900,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "8005",
+          "description": "Port the threat-intel service listens on (fixed in the image's command).",
+          "required": false
+        },
+        "ENVIRONMENT": {
+          "defaultValue": "production",
+          "description": "Production posture: the development auth bypass is unreachable and insecure defaults refuse to boot. Do not change.",
+          "required": false
+        },
+        "AISOC_DEV_MODE": {
+          "defaultValue": "0",
+          "description": "Development mode off: routes never fall back to an anonymous or demo principal. Do not change.",
+          "required": false
+        },
+        "AISOC_PUBLISHED_BIND_ADDRS": {
+          "defaultValue": "0.0.0.0",
+          "description": "Tells the service it is reachable from other hosts, so the developer auth shim stays refused even if dev mode were switched on.",
+          "required": false
+        },
+        "AISOC_ALLOW_CLEARTEXT_KAFKA": {
+          "defaultValue": "1",
+          "description": "Allow PLAINTEXT Kafka in production: the broker is reachable only over Railway's private network, which Railway encrypts. Set KAFKA_SECURITY_PROTOCOL instead if you bring a TLS broker.",
+          "required": false
+        },
+        "SECRET_KEY": {
+          "defaultValue": "${{api.SECRET_KEY}}",
+          "description": "Console token key.",
+          "required": false
+        },
+        "AISOC_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_SERVICE_TOKEN}}",
+          "description": "Shared service token (the API presents it when it proxies indicators).",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379/7",
+          "description": "Redis (database 7).",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker.",
+          "required": false
+        },
+        "QDRANT_HOST": {
+          "defaultValue": "${{qdrant.RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "Qdrant host (this service reads host and port, not a URL).",
+          "required": false
+        },
+        "QDRANT_PORT": {
+          "defaultValue": "6333",
+          "description": "Qdrant HTTP port.",
+          "required": false
+        },
+        "OPENSEARCH_HOST": {
+          "defaultValue": "${{opensearch.RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "OpenSearch host (IOC and actor full-text index).",
+          "required": false
+        },
+        "OPENSEARCH_PORT": {
+          "defaultValue": "9200",
+          "description": "OpenSearch HTTP port.",
+          "required": false
+        },
+        "NEO4J_URI": {
+          "defaultValue": "bolt://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7687",
+          "description": "Neo4j entity graph.",
+          "required": false
+        },
+        "NEO4J_USER": {
+          "defaultValue": "neo4j",
+          "description": "Neo4j user.",
+          "required": false
+        },
+        "NEO4J_PASSWORD": {
+          "defaultValue": "${{neo4j.NEO4J_PASSWORD}}",
+          "description": "Neo4j password.",
+          "required": false
+        },
+        "OTX_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional: AlienVault OTX key for an additional indicator feed. The CISA KEV feed needs no key.",
+          "required": false
+        },
+        "MISP_URL": {
+          "defaultValue": "",
+          "description": "Optional: MISP base URL to pull indicators from.",
+          "required": false
+        },
+        "MISP_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional: MISP API key.",
+          "required": false
+        }
+      }
+    },
+    "realtime": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/radio-tower.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-realtime:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/healthz",
+      "healthcheckTimeout": 600,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "8086",
+          "description": "Port the realtime gateway listens on (dual-stack).",
+          "required": false
+        },
+        "ENVIRONMENT": {
+          "defaultValue": "production",
+          "description": "Production posture (refuses a wildcard CORS origin). Do not change.",
+          "required": false
+        },
+        "AISOC_ALLOW_CLEARTEXT_KAFKA": {
+          "defaultValue": "1",
+          "description": "Allow PLAINTEXT Kafka on Railway's encrypted private network.",
+          "required": false
+        },
+        "AISOC_REALTIME_JWT_SECRET": {
+          "defaultValue": "${{api.AISOC_REALTIME_JWT_SECRET}}",
+          "description": "Verifies realtime tickets minted by the API; unset rejects every connection.",
+          "required": false
+        },
+        "REALTIME_INTERNAL_TOKEN": {
+          "defaultValue": "${{api.REALTIME_INTERNAL_TOKEN}}",
+          "description": "Guards /internal/*; unset answers 503.",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379",
+          "description": "Redis (fan-out).",
+          "required": false
+        },
+        "REDIS_PASSWORD": {
+          "defaultValue": "${{Redis.REDIS_PASSWORD}}",
+          "description": "Redis password.",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker (fused alerts, graph updates).",
+          "required": false
+        },
+        "AISOC_CORS_ORIGINS": {
+          "defaultValue": "https://${{web.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Allowed browser origin (the console).",
+          "required": false
+        }
+      }
+    },
+    "enrichment": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/search-check.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-enrichment:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/health",
+      "healthcheckTimeout": 600,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "8082",
+          "description": "Port Railway's healthcheck probes (same as HTTP_PORT).",
+          "required": false
+        },
+        "HTTP_PORT": {
+          "defaultValue": "8082",
+          "description": "Enrichment HTTP port (private only; this service has no authentication of its own).",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379/2",
+          "description": "Redis (database 2) for the enrichment cache.",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker.",
+          "required": false
+        },
+        "VIRUSTOTAL_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional: VirusTotal key for IOC enrichment.",
+          "required": false
+        },
+        "ABUSEIPDB_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional: AbuseIPDB key for IP reputation.",
+          "required": false
+        },
+        "GREYNOISE_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional: GreyNoise key for IP context.",
+          "required": false
+        },
+        "SHODAN_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional: Shodan key for host context.",
+          "required": false
+        }
+      }
+    },
+    "ueba": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/user-search.svg",
+      "source": {
+        "image": "ghcr.io/beenuar/aisoc-ueba:v20.3.0"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/readyz",
+      "healthcheckTimeout": 900,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "8004",
+          "description": "Port the UEBA service listens on (fixed in the image's command).",
+          "required": false
+        },
+        "ENVIRONMENT": {
+          "defaultValue": "production",
+          "description": "Production posture: the development auth bypass is unreachable and insecure defaults refuse to boot. Do not change.",
+          "required": false
+        },
+        "AISOC_DEV_MODE": {
+          "defaultValue": "0",
+          "description": "Development mode off: routes never fall back to an anonymous or demo principal. Do not change.",
+          "required": false
+        },
+        "AISOC_PUBLISHED_BIND_ADDRS": {
+          "defaultValue": "0.0.0.0",
+          "description": "Tells the service it is reachable from other hosts, so the developer auth shim stays refused even if dev mode were switched on.",
+          "required": false
+        },
+        "AISOC_ALLOW_CLEARTEXT_KAFKA": {
+          "defaultValue": "1",
+          "description": "Allow PLAINTEXT Kafka in production: the broker is reachable only over Railway's private network, which Railway encrypts. Set KAFKA_SECURITY_PROTOCOL instead if you bring a TLS broker.",
+          "required": false
+        },
+        "AISOC_SERVICE_TOKEN": {
+          "defaultValue": "${{api.AISOC_SERVICE_TOKEN}}",
+          "description": "Shared service token.",
+          "required": false
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgresql+asyncpg://aisoc_app:${{api.AISOC_APP_DB_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}",
+          "description": "Postgres as aisoc_app (runtime).",
+          "required": false
+        },
+        "DATABASE_MIGRATION_URL": {
+          "defaultValue": "postgresql+asyncpg://${{Postgres.POSTGRES_USER}}:${{Postgres.POSTGRES_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.POSTGRES_DB}}",
+          "description": "Owner connection for this service's own Alembic chain, applied at start.",
+          "required": false
+        },
+        "AISOC_APP_DB_PASSWORD": {
+          "defaultValue": "${{api.AISOC_APP_DB_PASSWORD}}",
+          "description": "Runtime role password (as upstream passes it).",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://default:${{Redis.REDIS_PASSWORD}}@${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379/8",
+          "description": "Redis (database 8).",
+          "required": false
+        },
+        "KAFKA_BOOTSTRAP_SERVERS": {
+          "defaultValue": "${{kafka.RAILWAY_PRIVATE_DOMAIN}}:9092",
+          "description": "Kafka-API broker (consumes aisoc.raw_events, publishes ueba.anomalies).",
+          "required": false
+        },
+        "CLICKHOUSE_URL": {
+          "defaultValue": "http://${{clickhouse.CLICKHOUSE_USER}}:${{clickhouse.CLICKHOUSE_PASSWORD}}@${{clickhouse.RAILWAY_PRIVATE_DOMAIN}}:8123/aisoc",
+          "description": "ClickHouse HTTP URL for baselines.",
+          "required": false
+        },
+        "CORE_API_URL": {
+          "defaultValue": "http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "description": "Core API.",
+          "required": false
+        },
+        "OTEL_SDK_DISABLED": {
+          "defaultValue": "true",
+          "description": "Tracing off (no OpenTelemetry collector in this template).",
+          "required": false
+        }
+      }
+    },
+    "litellm": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/brain-circuit.svg",
+      "source": {
+        "repo": "baranberkay96/aisoc-railway",
+        "rootDirectory": "/services/litellm"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/health/liveliness",
+      "healthcheckTimeout": 600,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "4000",
+          "description": "Port the gateway listens on; Railway's healthcheck probes it.",
+          "required": false
+        },
+        "LITELLM_MASTER_KEY": {
+          "defaultValue": "sk-${{secret(40, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Bearer every AiSOC service presents to the gateway (generated; upstream's compose default is a published literal).",
+          "required": false
+        },
+        "AISOC_LLM_MODEL_FAST": {
+          "defaultValue": "ollama_chat/${{ollama.OLLAMA_DEFAULT_MODEL}}",
+          "description": "Model behind the high-volume aliases (triage, summary, copilot, NL, hunt, detection). Any LiteLLM model string, e.g. openai/<model> with OPENAI_API_KEY set and AISOC_LLM_API_BASE emptied.",
+          "required": false
+        },
+        "AISOC_LLM_MODEL_DEEP": {
+          "defaultValue": "ollama_chat/${{ollama.OLLAMA_DEFAULT_MODEL}}",
+          "description": "Model behind the investigation and report aliases.",
+          "required": false
+        },
+        "AISOC_LLM_API_BASE": {
+          "defaultValue": "http://${{ollama.RAILWAY_PRIVATE_DOMAIN}}:11434",
+          "description": "API base for both models (the bundled Ollama). Set it to an empty value when you switch to a hosted provider.",
+          "required": false
+        },
+        "OPENAI_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional: hosted-provider key (OpenAI or any OpenAI-compatible provider). Empty = the bundled local model answers.",
+          "required": false
+        },
+        "ANTHROPIC_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional: Anthropic key, for anthropic/<model> strings.",
+          "required": false
+        },
+        "AISOC_LITELLM_REQUEST_TIMEOUT": {
+          "defaultValue": "300",
+          "description": "Seconds the gateway waits for one generation. 300 suits CPU-only inference (upstream default 60, raised per upstream issue #1241 guidance).",
+          "required": false
+        }
+      }
+    },
+    "ollama": {
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ollama.svg",
+      "source": {
+        "repo": "baranberkay96/aisoc-railway",
+        "rootDirectory": "/services/ollama"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/",
+      "healthcheckTimeout": 900,
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10,
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/root/.ollama"
+      },
+      "variables": {
+        "PORT": {
+          "defaultValue": "11434",
+          "description": "Port Ollama listens on; Railway's healthcheck probes it.",
+          "required": false
+        },
+        "OLLAMA_HOST": {
+          "defaultValue": "[::]:11434",
+          "description": "Listen on IPv4 and IPv6.",
+          "required": false
+        },
+        "OLLAMA_PULL_MODELS": {
+          "defaultValue": "llama3.2:3b-instruct-q4_K_M",
+          "description": "Models pulled on first boot (comma-separated). Upstream's pinned CPU model, about 2 GB.",
+          "required": false
+        },
+        "OLLAMA_BASE_MODEL": {
+          "defaultValue": "llama3.2:3b-instruct-q4_K_M",
+          "description": "Model the CPU-tuned copy is created from.",
+          "required": false
+        },
+        "OLLAMA_DEFAULT_MODEL": {
+          "defaultValue": "aisoc-llama3.2:3b",
+          "description": "CPU-tuned copy (explicit thread count and context) that the LiteLLM aliases use. Recreated on every start.",
+          "required": false
+        },
+        "OLLAMA_NUM_THREAD": {
+          "defaultValue": "",
+          "description": "Optional override for the inference thread count. Empty = the service's CPU quota, capped at 8.",
+          "required": false
+        },
+        "OLLAMA_CONTEXT_LENGTH": {
+          "defaultValue": "8192",
+          "description": "Context window of the tuned model (tokens).",
+          "required": false
+        },
+        "OLLAMA_FLASH_ATTENTION": {
+          "defaultValue": "1",
+          "description": "Flash attention on (smaller KV cache).",
+          "required": false
+        },
+        "OLLAMA_KV_CACHE_TYPE": {
+          "defaultValue": "q8_0",
+          "description": "8-bit KV cache (about half the memory of f16).",
+          "required": false
+        },
+        "OLLAMA_NUM_PARALLEL": {
+          "defaultValue": "1",
+          "description": "One generation at a time (CPU); other requests queue.",
+          "required": false
+        },
+        "OLLAMA_MAX_LOADED_MODELS": {
+          "defaultValue": "1",
+          "description": "Keep at most one model in memory.",
+          "required": false
+        },
+        "OLLAMA_KEEP_ALIVE": {
+          "defaultValue": "30m",
+          "description": "Unload the model after 30 idle minutes (frees about 2.5 GB).",
+          "required": false
+        }
+      }
+    },
+    "kafka": {
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/kafka-light.svg",
+      "source": {
+        "image": "redpandadata/redpanda:v24.3.18"
+      },
+      "startCommand": "/bin/sh -c \"rm -rf /var/lib/redpanda/data/lost+found && exec rpk redpanda start --kafka-addr internal://[::]:9092 --advertise-kafka-addr internal://$RAILWAY_PRIVATE_DOMAIN:9092 --pandaproxy-addr internal://[::]:8082 --advertise-pandaproxy-addr internal://$RAILWAY_PRIVATE_DOMAIN:8082 --schema-registry-addr internal://[::]:8081 --rpc-addr 0.0.0.0:33145 --advertise-rpc-addr $RAILWAY_PRIVATE_DOMAIN:33145 --mode dev-container --smp 1 --memory $REDPANDA_MEMORY --reserve-memory 0M --default-log-level=info\"",
+      "preDeployCommand": null,
+      "healthcheckPath": "/v1/status/ready",
+      "healthcheckTimeout": 600,
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10,
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/var/lib/redpanda/data"
+      },
+      "variables": {
+        "PORT": {
+          "defaultValue": "9644",
+          "description": "Redpanda admin API port; Railway's healthcheck probes /v1/status/ready here.",
+          "required": false
+        },
+        "REDPANDA_MEMORY": {
+          "defaultValue": "1G",
+          "description": "Memory Redpanda may use (Seastar would otherwise size itself to the host). Raise with the service's RAM.",
+          "required": false
+        },
+        "RAILWAY_RUN_UID": {
+          "defaultValue": "0",
+          "description": "Run as root so Redpanda can write the root-owned Railway volume.",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "30",
+          "description": "Allow a clean shutdown on redeploy.",
+          "required": false
+        }
+      }
+    },
+    "qdrant": {
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/qdrant.svg",
+      "source": {
+        "image": "qdrant/qdrant:v1.19.2"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/readyz",
+      "healthcheckTimeout": 300,
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10,
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/qdrant/storage"
+      },
+      "variables": {
+        "PORT": {
+          "defaultValue": "6333",
+          "description": "Qdrant HTTP port; Railway's healthcheck probes /readyz here.",
+          "required": false
+        },
+        "QDRANT__SERVICE__HOST": {
+          "defaultValue": "::",
+          "description": "Listen on IPv4 and IPv6.",
+          "required": false
+        },
+        "QDRANT__TELEMETRY_DISABLED": {
+          "defaultValue": "true",
+          "description": "No usage telemetry.",
+          "required": false
+        }
+      }
+    },
+    "clickhouse": {
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/clickhouse.svg",
+      "source": {
+        "repo": "baranberkay96/aisoc-railway",
+        "rootDirectory": "/services/clickhouse"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/ping",
+      "healthcheckTimeout": 600,
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10,
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/var/lib/clickhouse"
+      },
+      "variables": {
+        "PORT": {
+          "defaultValue": "8123",
+          "description": "ClickHouse HTTP port; Railway's healthcheck probes /ping here.",
+          "required": false
+        },
+        "CLICKHOUSE_DB": {
+          "defaultValue": "aisoc",
+          "description": "Database created on first boot.",
+          "required": false
+        },
+        "CLICKHOUSE_USER": {
+          "defaultValue": "aisoc",
+          "description": "User created on first boot; replaces the passwordless default user.",
+          "required": false
+        },
+        "CLICKHOUSE_PASSWORD": {
+          "defaultValue": "${{secret(32, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Password of the ClickHouse user (generated).",
+          "required": false
+        },
+        "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT": {
+          "defaultValue": "1",
+          "description": "Allow the user to manage access (as upstream).",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "30",
+          "description": "Allow a clean shutdown on redeploy.",
+          "required": false
+        }
+      }
+    },
+    "opensearch": {
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/opensearch.svg",
+      "source": {
+        "repo": "baranberkay96/aisoc-railway",
+        "rootDirectory": "/services/opensearch"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/_cluster/health",
+      "healthcheckTimeout": 600,
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10,
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/usr/share/opensearch/data"
+      },
+      "variables": {
+        "PORT": {
+          "defaultValue": "9200",
+          "description": "OpenSearch HTTP port; Railway's healthcheck probes it.",
+          "required": false
+        },
+        "discovery.type": {
+          "defaultValue": "single-node",
+          "description": "Single-node cluster (also skips the production bootstrap checks).",
+          "required": false
+        },
+        "cluster.name": {
+          "defaultValue": "aisoc-cluster",
+          "description": "Cluster name (as upstream).",
+          "required": false
+        },
+        "node.name": {
+          "defaultValue": "aisoc-node-1",
+          "description": "Node name (as upstream).",
+          "required": false
+        },
+        "network.host": {
+          "defaultValue": "0.0.0.0",
+          "description": "Bind address (Java listens dual-stack). 0.0.0.0, not '::' (Rule: settings are passed through unquoted).",
+          "required": false
+        },
+        "bootstrap.memory_lock": {
+          "defaultValue": "false",
+          "description": "memlock ulimits cannot be raised on Railway (upstream sets true with an unlimited memlock).",
+          "required": false
+        },
+        "node.store.allow_mmap": {
+          "defaultValue": "false",
+          "description": "Do not depend on the host's vm.max_map_count.",
+          "required": false
+        },
+        "OPENSEARCH_JAVA_OPTS": {
+          "defaultValue": "-Xms512m -Xmx512m",
+          "description": "JVM heap (as upstream). The process settles near 1 GB RSS with this heap.",
+          "required": false
+        },
+        "DISABLE_INSTALL_DEMO_CONFIG": {
+          "defaultValue": "true",
+          "description": "No demo certificates or users (as upstream).",
+          "required": false
+        },
+        "DISABLE_SECURITY_PLUGIN": {
+          "defaultValue": "true",
+          "description": "Security plugin off as upstream: reachable only on the private network, and the threatintel client connects without credentials.",
+          "required": false
+        },
+        "DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI": {
+          "defaultValue": "true",
+          "description": "Skip the performance-analyzer side process (saves memory; AiSOC does not use it).",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "30",
+          "description": "Allow a clean shutdown on redeploy.",
+          "required": false
+        }
+      }
+    },
+    "neo4j": {
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/neo4j.svg",
+      "source": {
+        "image": "neo4j:5.15.0-community"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": "/",
+      "healthcheckTimeout": 600,
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10,
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/data"
+      },
+      "variables": {
+        "PORT": {
+          "defaultValue": "7474",
+          "description": "Neo4j HTTP port; Railway's healthcheck probes it.",
+          "required": false
+        },
+        "NEO4J_PASSWORD": {
+          "defaultValue": "${{secret(32, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
+          "description": "Password of the neo4j user (generated).",
+          "required": false
+        },
+        "NEO4J_AUTH": {
+          "defaultValue": "neo4j/${{NEO4J_PASSWORD}}",
+          "description": "Initial credentials, applied on first boot.",
+          "required": false
+        },
+        "NEO4J_PLUGINS": {
+          "defaultValue": "[\"apoc\"]",
+          "description": "APOC core (bundled in the image, as upstream).",
+          "required": false
+        },
+        "NEO4J_dbms_security_procedures_unrestricted": {
+          "defaultValue": "apoc.*",
+          "description": "Allow APOC procedures (as upstream).",
+          "required": false
+        },
+        "NEO4J_server_memory_heap_initial__size": {
+          "defaultValue": "256m",
+          "description": "JVM heap start (upstream values, Neo4j 5 setting names).",
+          "required": false
+        },
+        "NEO4J_server_memory_heap_max__size": {
+          "defaultValue": "512m",
+          "description": "JVM heap limit.",
+          "required": false
+        },
+        "NEO4J_server_memory_pagecache_size": {
+          "defaultValue": "256m",
+          "description": "Page cache (Neo4j would otherwise size it from host memory).",
+          "required": false
+        },
+        "NEO4J_dbms_usage__report_enabled": {
+          "defaultValue": "false",
+          "description": "No usage reports to Neo4j.",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "30",
+          "description": "Allow a clean shutdown on redeploy.",
+          "required": false
+        }
+      }
+    },
+    "Postgres": {
+      "icon": "https://devicons.railway.app/i/postgresql.svg",
+      "source": {
+        "image": "ghcr.io/railwayapp-templates/postgres-ssl:18"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": null,
+      "healthcheckTimeout": null,
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10,
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/var/lib/postgresql/data"
+      },
+      "variables": {
+        "PGDATA": {
+          "defaultValue": "/var/lib/postgresql/data/pgdata",
+          "description": "Location where the database will be initialized.",
+          "required": false
+        },
+        "PGHOST": {
+          "defaultValue": "${{RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "Railway private domain name.",
+          "required": false
+        },
+        "PGPORT": {
+          "defaultValue": "5432",
+          "description": "Port to connect to Postgres.",
+          "required": false
+        },
+        "PGUSER": {
+          "defaultValue": "${{ POSTGRES_USER }}",
+          "description": "Required variable for the Data panel.",
+          "required": false
+        },
+        "PGDATABASE": {
+          "defaultValue": "${{POSTGRES_DB}}",
+          "description": "Required variable for the Data panel.",
+          "required": false
+        },
+        "PGPASSWORD": {
+          "defaultValue": "${{POSTGRES_PASSWORD}}",
+          "description": "Required variable for the Data panel.",
+          "required": false
+        },
+        "POSTGRES_DB": {
+          "defaultValue": "aisoc",
+          "description": "Database created on first boot (AiSOC's name for it).",
+          "required": false
+        },
+        "POSTGRES_USER": {
+          "defaultValue": "aisoc",
+          "description": "Owner/superuser role. Only the API's migration step and UEBA's migrations connect as it; every service runs as aisoc_app.",
+          "required": false
+        },
+        "POSTGRES_PASSWORD": {
+          "defaultValue": "${{ secret(32, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\") }}",
+          "description": "Password of the owner role (generated).",
+          "required": false
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{PGDATABASE}}",
+          "description": "Owner connection URL (for the Data panel and admin work).",
+          "required": false
+        },
+        "SSL_CERT_DAYS": {
+          "defaultValue": "820",
+          "description": "SSL certificate expiry in days.",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "60",
+          "description": "Allow Postgres to cleanly shut down.",
+          "required": false
+        }
+      }
+    },
+    "Redis": {
+      "icon": "https://cdn.sanity.io/images/sy1jschh/production/0ce0bfdcfbdbf69662b1116671f97c2dd788b655-157x157.svg",
+      "source": {
+        "image": "redis:8.2.11"
+      },
+      "startCommand": "/bin/sh -c \"rm -rf $RAILWAY_VOLUME_MOUNT_PATH/lost+found/ && exec docker-entrypoint.sh redis-server --requirepass $REDIS_PASSWORD --save 60 1 --dir $RAILWAY_VOLUME_MOUNT_PATH\"",
+      "preDeployCommand": null,
+      "healthcheckPath": null,
+      "healthcheckTimeout": null,
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10,
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/data"
+      },
+      "variables": {
+        "REDISHOST": {
+          "defaultValue": "${{RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "Private network hostname of the Redis service.",
+          "required": false
+        },
+        "REDISPORT": {
+          "defaultValue": "6379",
+          "description": "Port that Redis listens on.",
+          "required": false
+        },
+        "REDISUSER": {
+          "defaultValue": "default",
+          "description": "Username for authenticating with Redis.",
+          "required": false
+        },
+        "REDIS_PASSWORD": {
+          "defaultValue": "${{ secret(32, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\") }}",
+          "description": "Randomly generated password for authenticating with Redis.",
+          "required": false
+        },
+        "REDISPASSWORD": {
+          "defaultValue": "${{REDIS_PASSWORD}}",
+          "description": "Alias of REDIS_PASSWORD for clients that expect the unseparated name.",
+          "required": false
+        },
+        "REDIS_URL": {
+          "defaultValue": "redis://${{ REDISUSER }}:${{ REDIS_PASSWORD }}@${{ REDISHOST }}:${{ REDISPORT }}",
+          "description": "Connection string on the private network.",
+          "required": false
+        }
+      }
+    }
+  },
+  "buckets": []
+}
