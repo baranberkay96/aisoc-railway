@@ -253,7 +253,7 @@ Generated from `template.json`. `${{svc.VAR}}` references resolve on Railway; `$
 | `QDRANT_URL` | `http://${{qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333` | Qdrant vector store. |
 | `NEO4J_URI` | `bolt://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7687` | Neo4j entity graph (direct Bolt). |
 | `NEO4J_USER` | `neo4j` | Neo4j user. |
-| `NEO4J_PASSWORD` | `${{neo4j.NEO4J_PASSWORD}}` | Neo4j password. |
+| `NEO4J_PASSWORD` | `${{neo4j.AISOC_NEO4J_PASSWORD}}` | Neo4j password. |
 | `CONNECTORS_SERVICE_URL` | `http://${{connectors.RAILWAY_PRIVATE_DOMAIN}}:8003` | Connectors service (catalog, test connection, federated search). |
 | `THREATINTEL_SERVICE_URL` | `http://${{threatintel.RAILWAY_PRIVATE_DOMAIN}}:8005` | Threat-intel service (serves /api/v1/threat-intel/indicators). |
 | `AGENTS_SERVICE_URL` | `http://${{agents.RAILWAY_PRIVATE_DOMAIN}}:8084` | Agents service (investigations, playbooks). |
@@ -295,7 +295,7 @@ Generated from `template.json`. `${{svc.VAR}}` references resolve on Railway; `$
 | `AISOC_GRAPH_ENABLED` | `true` | Write entities to the Neo4j graph at ingest (upstream 'full' profile). |
 | `AISOC_NEO4J_URI` | `bolt://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7687` | Neo4j entity graph. |
 | `AISOC_NEO4J_USER` | `neo4j` | Neo4j user. |
-| `AISOC_NEO4J_PASSWORD` | `${{neo4j.NEO4J_PASSWORD}}` | Neo4j password. |
+| `AISOC_NEO4J_PASSWORD` | `${{neo4j.AISOC_NEO4J_PASSWORD}}` | Neo4j password. |
 | `AISOC_CORS_ORIGINS` | `https://${{web.RAILWAY_PUBLIC_DOMAIN}}` | Allowed browser origin (the console). Telemetry senders are not browsers and are unaffected. |
 | `AISOC_RAILWAY_WAIT_URL` | `http://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7474/` | Template helper: ingest waits up to 3 minutes for Neo4j at start, because its graph writer disables itself for the life of the process if Neo4j is not reachable within 60 s. |
 
@@ -355,7 +355,7 @@ Generated from `template.json`. `${{svc.VAR}}` references resolve on Railway; `$
 | `QDRANT_URL` | `http://${{qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333` | Qdrant vector store. |
 | `NEO4J_URI` | `bolt://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7687` | Neo4j entity graph. |
 | `NEO4J_USER` | `neo4j` | Neo4j user. |
-| `NEO4J_PASSWORD` | `${{neo4j.NEO4J_PASSWORD}}` | Neo4j password. |
+| `NEO4J_PASSWORD` | `${{neo4j.AISOC_NEO4J_PASSWORD}}` | Neo4j password. |
 | `CLICKHOUSE_HOST` | `${{clickhouse.RAILWAY_PRIVATE_DOMAIN}}` | ClickHouse host (hunting agent). |
 | `CLICKHOUSE_PORT` | `9000` | ClickHouse native port. |
 | `CLICKHOUSE_DATABASE` | `aisoc` | ClickHouse database. |
@@ -438,7 +438,7 @@ Generated from `template.json`. `${{svc.VAR}}` references resolve on Railway; `$
 | `OPENSEARCH_PORT` | `9200` | OpenSearch HTTP port. |
 | `NEO4J_URI` | `bolt://${{neo4j.RAILWAY_PRIVATE_DOMAIN}}:7687` | Neo4j entity graph. |
 | `NEO4J_USER` | `neo4j` | Neo4j user. |
-| `NEO4J_PASSWORD` | `${{neo4j.NEO4J_PASSWORD}}` | Neo4j password. |
+| `NEO4J_PASSWORD` | `${{neo4j.AISOC_NEO4J_PASSWORD}}` | Neo4j password. |
 | `OTX_API_KEY` | (empty) | Optional: AlienVault OTX key for an additional indicator feed. The CISA KEV feed needs no key. |
 | `MISP_URL` | (empty) | Optional: MISP base URL to pull indicators from. |
 | `MISP_API_KEY` | (empty) | Optional: MISP API key. |
@@ -569,8 +569,8 @@ Generated from `template.json`. `${{svc.VAR}}` references resolve on Railway; `$
 | Variable | Value | Description |
 |---|---|---|
 | `PORT` | `7474` | Neo4j HTTP port; Railway's healthcheck probes it. |
-| `NEO4J_PASSWORD` | `${{secret(32, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")}}` | Password of the neo4j user (generated). |
-| `NEO4J_AUTH` | `neo4j/${{NEO4J_PASSWORD}}` | Initial credentials, applied on first boot. |
+| `AISOC_NEO4J_PASSWORD` | `${{secret(32, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")}}` | Password of the neo4j user (generated). Not prefixed `NEO4J_`, because the Neo4j image turns every `NEO4J_*` variable into a config setting and refuses unknown ones. |
+| `NEO4J_AUTH` | `neo4j/${{AISOC_NEO4J_PASSWORD}}` | Initial credentials, applied on first boot. |
 | `NEO4J_PLUGINS` | `["apoc"]` | APOC core (bundled in the image, as upstream). |
 | `NEO4J_dbms_security_procedures_unrestricted` | `apoc.*` | Allow APOC procedures (as upstream). |
 | `NEO4J_server_memory_heap_initial__size` | `256m` | JVM heap start (upstream values, Neo4j 5 setting names). |

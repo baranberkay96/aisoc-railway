@@ -252,7 +252,7 @@
           "required": false
         },
         "NEO4J_PASSWORD": {
-          "defaultValue": "${{neo4j.NEO4J_PASSWORD}}",
+          "defaultValue": "${{neo4j.AISOC_NEO4J_PASSWORD}}",
           "description": "Neo4j password.",
           "required": false
         },
@@ -456,7 +456,7 @@
           "required": false
         },
         "AISOC_NEO4J_PASSWORD": {
-          "defaultValue": "${{neo4j.NEO4J_PASSWORD}}",
+          "defaultValue": "${{neo4j.AISOC_NEO4J_PASSWORD}}",
           "description": "Neo4j password.",
           "required": false
         },
@@ -748,7 +748,7 @@
           "required": false
         },
         "NEO4J_PASSWORD": {
-          "defaultValue": "${{neo4j.NEO4J_PASSWORD}}",
+          "defaultValue": "${{neo4j.AISOC_NEO4J_PASSWORD}}",
           "description": "Neo4j password.",
           "required": false
         },
@@ -1145,7 +1145,7 @@
           "required": false
         },
         "NEO4J_PASSWORD": {
-          "defaultValue": "${{neo4j.NEO4J_PASSWORD}}",
+          "defaultValue": "${{neo4j.AISOC_NEO4J_PASSWORD}}",
           "description": "Neo4j password.",
           "required": false
         },
@@ -1761,13 +1761,13 @@
           "description": "Neo4j HTTP port; Railway's healthcheck probes it.",
           "required": false
         },
-        "NEO4J_PASSWORD": {
+        "AISOC_NEO4J_PASSWORD": {
           "defaultValue": "${{secret(32, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\")}}",
           "description": "Password of the neo4j user (generated).",
           "required": false
         },
         "NEO4J_AUTH": {
-          "defaultValue": "neo4j/${{NEO4J_PASSWORD}}",
+          "defaultValue": "neo4j/${{AISOC_NEO4J_PASSWORD}}",
           "description": "Initial credentials, applied on first boot.",
           "required": false
         },
